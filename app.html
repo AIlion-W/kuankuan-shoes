@@ -847,8 +847,13 @@ function buildDetailPage(useDataURL = false) {
   const title = item?.title || '产品';
   const price = item?.skus?.promotion_price || item?.skus?.price || '—';
 
-  const imgSrc = (i) => useDataURL ? (STATE.heroDataURLs[i] || STATE.heroImages[i]) : (STATE.heroImages[i] || STATE.heroDataURLs[i]);
-  const heroImg = imgSrc(0) || 'data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 800 800%22><rect fill=%22%23F4F1EA%22 width=%22800%22 height=%22800%22/><text x=%22400%22 y=%22400%22 font-size=%2240%22 text-anchor=%22middle%22 fill=%22%231D3557%22>主图生成中</text></svg>';
+  // 兜底：用淘宝商品自带的真实图片（//img.alicdn.com/...），主图未生成时显示
+  const productImgs = (item?.images || []).map(u => (u && u.startsWith('//')) ? 'https:' + u : u).filter(Boolean);
+  const imgSrc = (i) => useDataURL
+    ? (STATE.heroDataURLs[i] || STATE.heroImages[i] || productImgs[i])
+    : (STATE.heroImages[i] || STATE.heroDataURLs[i] || productImgs[i]);
+  const heroImg = imgSrc(0) || productImgs[0] ||
+    'data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 800 800%22><rect fill=%22%23F4F1EA%22 width=%22800%22 height=%22800%22/></svg>';
   const galleryImgs = [imgSrc(0), imgSrc(1), imgSrc(2)].filter(Boolean);
 
   return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>${escapeHtml(s.main_slogan)} · 详情页</title>
