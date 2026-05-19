@@ -662,14 +662,19 @@ ${STATE.competitor.slice(0, 3000)}
     { maxTokens: 6000, temperature: 0.85 }
   );
 
-  // 解析 JSON
-  let jsonText = raw.trim();
-  if (jsonText.startsWith('```')) jsonText = jsonText.replace(/^```(json)?\n?/, '').replace(/```\s*$/, '');
-  const m = jsonText.match(/\[[\s\S]*\]/);
-  if (m) jsonText = m[0];
+  // 解析 JSON（鲁棒）
+  console.log('[④突围点] 原始响应:', raw);
   let bos;
-  try { bos = JSON.parse(jsonText); }
-  catch (e) { throw new Error('突围点 JSON 解析失败: ' + e.message); }
+  try { bos = robustParseArray(raw); }
+  catch (e) {
+    setStep(4, 'error');
+    $(`block-4`).querySelector('.body').innerHTML = `
+      <p style="color:var(--err);"><strong>突围点 JSON 解析失败：</strong>${escapeHtml(e.message)}</p>
+      <details open><summary style="cursor:pointer;font-size:13px;margin:8px 0;">查看原始响应</summary>
+      <pre style="background:var(--paper);padding:12px;border-radius:8px;font-size:12px;max-height:300px;overflow:auto;white-space:pre-wrap;">${escapeHtml(raw)}</pre></details>
+      <button class="btn btn-primary" onclick="location.reload()">↻ 刷新重试</button>`;
+    throw e;
+  }
   STATE.breakouts = bos;
 
   // 渲染卡片让用户挑
@@ -740,11 +745,18 @@ slogan 草稿：${sb.slogan_draft}
 
   let sRaw = '';
   await llmStream(sloganPrompt, '请生成。', chunk => { sRaw += chunk; appendStream(5, chunk); }, { maxTokens: 3000 });
-  let sJson = sRaw.trim();
-  if (sJson.startsWith('```')) sJson = sJson.replace(/^```(json)?\n?/, '').replace(/```\s*$/, '');
-  const sMatch = sJson.match(/\{[\s\S]*\}/);
-  if (sMatch) sJson = sMatch[0];
-  STATE.slogan = JSON.parse(sJson);
+  console.log('[⑤Slogan] 原始响应:', sRaw);
+  try {
+    STATE.slogan = robustParseObject(sRaw);
+  } catch (e) {
+    setStep(5, 'error');
+    $(`block-5`).querySelector('.body').innerHTML = `
+      <p style="color:var(--err);"><strong>Slogan JSON 解析失败：</strong>${escapeHtml(e.message)}</p>
+      <details open><summary style="cursor:pointer;font-size:13px;margin:8px 0;">查看原始响应（已复制到 console）</summary>
+      <pre style="background:var(--paper);padding:12px;border-radius:8px;font-size:12px;max-height:300px;overflow:auto;white-space:pre-wrap;">${escapeHtml(sRaw)}</pre></details>
+      <button class="btn btn-primary" onclick="location.reload()">↻ 刷新重试</button>`;
+    throw e;
+  }
 
   $(`block-5`).querySelector('.body').innerHTML = `
     <div style="background: var(--ink); color: white; padding: 32px; border-radius: 12px; margin-bottom: 20px;">
@@ -905,6 +917,51 @@ function heroH1(slogan) {
   const mid = Math.floor(slogan.length / 2);
   const start = Math.max(0, mid - 2), end = Math.min(slogan.length, mid + 2);
   return escapeHtml(slogan.slice(0, start)) + `<em>${escapeHtml(slogan.slice(start, end))}</em>` + escapeHtml(slogan.slice(end));
+}
+
+function stripWrap(text) {
+  let t = text.trim();
+  // 去掉 markdown 代码块包裹
+  t = t.replace(/^```(?:json|JSON)?\s*\n?/, '').replace(/\n?```\s*$/, '');
+  return t.trim();
+}
+function tryParse(t) {
+  // 移除 JSON 中常见瑕疵：尾随逗号
+  const cleaned = t.replace(/,\s*([}\]])/g, '$1');
+  return JSON.parse(cleaned);
+}
+function robustParseArray(raw) {
+  const t = stripWrap(raw);
+  // 尝试直接解析
+  try { return tryParse(t); } catch (_) {}
+  // 提取首个 [...]
+  const m = t.match(/\[[\s\S]*\]/);
+  if (m) { try { return tryParse(m[0]); } catch (_) {} }
+  // 截到最后一个 ] 之前
+  const last = t.lastIndexOf(']');
+  if (last > 0) {
+    try { return tryParse(t.slice(0, last + 1)); } catch (_) {}
+    const first = t.indexOf('[');
+    if (first >= 0 && first < last) {
+      try { return tryParse(t.slice(first, last + 1)); } catch (e) {
+        throw new Error('JSON 数组解析失败: ' + e.message);
+      }
+    }
+  }
+  throw new Error('未找到合法 JSON 数组');
+}
+function robustParseObject(raw) {
+  const t = stripWrap(raw);
+  try { return tryParse(t); } catch (_) {}
+  const m = t.match(/\{[\s\S]*\}/);
+  if (m) { try { return tryParse(m[0]); } catch (_) {} }
+  const first = t.indexOf('{'), last = t.lastIndexOf('}');
+  if (first >= 0 && last > first) {
+    try { return tryParse(t.slice(first, last + 1)); } catch (e) {
+      throw new Error('JSON 对象解析失败: ' + e.message);
+    }
+  }
+  throw new Error('未找到合法 JSON 对象');
 }
 
 function escapeHtml(s) {
