@@ -784,11 +784,13 @@ slogan 草稿：${sb.slogan_draft}
     <div id="page-preview-area"></div>
   `);
 
-  const imgPromptBase = `产品定位：${title}（${STATE.keyword}），核心卖点：「${STATE.slogan.main_slogan}」，目标人群：${sb.audience}。`;
+  // 重要：不要带竞品品牌名/logo —— 这是一个新品牌在找突围机会
+  const NO_BRAND = `CRITICAL: This is a brand-new product for a new unnamed brand seeking market opportunity. ABSOLUTELY NO existing brand logos, NO trademarks, NO competitor brand names (no TARANIS, no Nike, no any existing brand marks). If you draw any text/logo on the product itself, only use generic neutral marks or leave the product clean and unbranded.`;
+  const imgPromptBase = `Product category: ${STATE.keyword}. Core selling point: 「${STATE.slogan.main_slogan}」. Target audience: ${sb.audience}.`;
   const imgPrompts = [
-    `Premium e-commerce hero shot, 1:1, product floating on a warm cream gradient background. Bold black Chinese title 「${STATE.slogan.main_slogan}」 in upper-left. Red seal stamp in lower-right with 「核心卖点」 text. Clean minimalist Tmall flagship style. Sharp product photography, NO cartoon, crisp Chinese typography. Context: ${imgPromptBase}`,
-    `Lifestyle product photography, 1:1, warm cozy mom-aesthetic. Target audience using the product naturally, soft natural light, light wood floor with small green plants. Small Chinese caption 「${STATE.slogan.alt_sub}」 in upper-right. Realistic photo, NOT cartoon. Crisp Chinese typography. Context: ${imgPromptBase}`,
-    `E-commerce comparison hero, 1:1, split layout. LEFT: generic competitor product with red highlight showing the problem + Chinese label 「常见问题」. RIGHT: our product showing the solution + green check + Chinese label 「${STATE.slogan.alt_data || STATE.slogan.main_slogan}」. Top-center title 「一眼看出区别」. Professional infographic style. Context: ${imgPromptBase}`
+    `Premium e-commerce hero shot, 1:1, an unbranded ${STATE.keyword} product floating centered on a warm cream gradient background. Bold black Chinese title 「${STATE.slogan.main_slogan}」 in upper-left. Red seal stamp in lower-right with 「核心卖点」 text. Clean minimalist Tmall flagship style. Sharp product photography, NO cartoon, crisp Chinese typography. ${NO_BRAND} ${imgPromptBase}`,
+    `Lifestyle product photography, 1:1, warm cozy aesthetic. Target audience using an unbranded ${STATE.keyword} product naturally, soft natural light, neutral background with simple props. Small Chinese caption 「${STATE.slogan.alt_sub}」 in upper-right. Realistic photo, NOT cartoon. ${NO_BRAND} ${imgPromptBase}`,
+    `E-commerce comparison hero, 1:1, split layout. LEFT: a generic anonymous ${STATE.keyword} product showing the typical problem (red highlight) + Chinese label 「常见问题」. RIGHT: an unbranded improved version showing the solution + green check + Chinese label 「${STATE.slogan.alt_data || STATE.slogan.main_slogan}」. Top-center title 「一眼看出区别」. Professional infographic style. ${NO_BRAND} ${imgPromptBase}`
   ];
 
   const imgPromises = imgPrompts.map((p, i) => genImage(p).then(async url => {
