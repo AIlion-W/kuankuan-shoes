@@ -333,12 +333,28 @@ function setStep(n, status /* active|done|error */) {
     if (status === 'active') {
       block.querySelector('.body').classList.remove('collapsed');
       block.querySelector('.status').innerHTML = '<span class="spinner"></span>处理中...';
+      // 自动滚动到当前活跃块，避免"看不见"的卡
+      setTimeout(() => block.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
     } else if (status === 'done') {
       block.querySelector('.status').textContent = '✓ 完成';
     } else if (status === 'error') {
       block.querySelector('.status').textContent = '✗ 失败';
     }
   }
+  console.log(`[Step ${n}] → ${status}`);
+}
+
+// 把异常直接显示在对应 step 块里，并把详情同步到 console
+function showStepError(n, title, err) {
+  const block = $(`block-${n}`);
+  if (!block) return;
+  console.error(`[Step ${n}] ${title}`, err);
+  setStep(n, 'error');
+  block.querySelector('.body').innerHTML = `
+    <p style="color:var(--err);"><strong>${escapeHtml(title)}：</strong>${escapeHtml(err.message || String(err))}</p>
+    <details open><summary style="cursor:pointer;font-size:13px;margin:8px 0;">技术详情</summary>
+    <pre style="background:var(--paper);padding:12px;border-radius:8px;font-size:12px;max-height:300px;overflow:auto;white-space:pre-wrap;">${escapeHtml(err.stack || err.message || String(err))}</pre></details>
+    <button class="btn btn-primary" onclick="location.reload()">↻ 刷新重试</button>`;
 }
 
 function toggleBlock(n) {
@@ -443,8 +459,8 @@ async function startManual() {
 }
 
 function handleErr(err) {
-  console.error(err);
-  alert('运行出错：' + err.message);
+  console.error('[Pipeline 顶层错误]', err);
+  // 错误已经由 showStepError 在对应 step 块里显示，这里不再额外 alert
 }
 
 /* ============================ API: Claude (non-streaming JSON helpers) ============================ */
@@ -588,11 +604,14 @@ async function runPipeline() {
 
 输出 markdown 格式，紧凑实用，不要废话。`;
 
-  await llmStream(
-    marketPrompt,
-    `产品：${title}\n关键词：${STATE.keyword}\n属性：${props}\n价格：¥${price}`,
-    chunk => appendStream(2, chunk)
-  ).then(out => { STATE.market = out; setStep(2, 'done'); });
+  try {
+    STATE.market = await llmStream(
+      marketPrompt,
+      `产品：${title}\n关键词：${STATE.keyword}\n属性：${props}\n价格：¥${price}`,
+      chunk => appendStream(2, chunk)
+    );
+    setStep(2, 'done');
+  } catch (e) { showStepError(2, '市场扫描 LLM 调用失败', e); throw e; }
 
   // Step 3: 竞品拆解
   setStep(3, 'active');
@@ -612,17 +631,20 @@ async function runPipeline() {
 
 输出 markdown。`;
 
-  await llmStream(
-    compPrompt,
-    `产品标题：${title}
+  try {
+    STATE.competitor = await llmStream(
+      compPrompt,
+      `产品标题：${title}
 属性：${props}
 价格：¥${price}
 评论总数：${reviewCount}+
 
 评论原文摘录：
 ${reviewComments.map((c,i) => `${i+1}. [${c.date}] ${c.content}`).join('\n')}`,
-    chunk => appendStream(3, chunk)
-  ).then(out => { STATE.competitor = out; setStep(3, 'done'); });
+      chunk => appendStream(3, chunk)
+    );
+    setStep(3, 'done');
+  } catch (e) { showStepError(3, '竞品拆解 LLM 调用失败', e); throw e; }
 
   // Step 4: 突围点
   setStep(4, 'active');
@@ -658,10 +680,12 @@ ${STATE.competitor.slice(0, 3000)}
 现在请生成 5-10 个突围点 JSON 数组。`;
 
   let raw = '';
-  await llmStream(breakoutPrompt, userMsg,
-    chunk => { raw += chunk; appendStream(4, chunk); },
-    { maxTokens: 6000, temperature: 0.85 }
-  );
+  try {
+    await llmStream(breakoutPrompt, userMsg,
+      chunk => { raw += chunk; appendStream(4, chunk); },
+      { maxTokens: 6000 }
+    );
+  } catch (e) { showStepError(4, '突围点 LLM 调用失败', e); throw e; }
 
   // 解析 JSON（鲁棒）
   console.log('[④突围点] 原始响应:', raw);
@@ -744,8 +768,19 @@ slogan 草稿：${sb.slogan_draft}
   "pain_intro": "Hero 区副标题，描述用户痛点场景（80-120 字）"
 }`;
 
+  // 步骤 5 调用前先放个明显的"等待响应"提示
+  setBlockBody(5, `<p style="color:var(--muted);"><span class="spinner"></span>正在向 Claude Opus 4.7 发起请求，等首个响应包...</p><div class="stream" style="margin-top:12px;"></div>`);
   let sRaw = '';
-  await llmStream(sloganPrompt, '请生成。', chunk => { sRaw += chunk; appendStream(5, chunk); }, { maxTokens: 3000 });
+  try {
+    await llmStream(sloganPrompt, '请按 JSON 格式生成最终卖点方案。', chunk => {
+      if (!sRaw) {
+        // 第一次拿到 chunk 就把"等待响应"那行去掉
+        setBlockBody(5, '<div class="stream"></div>');
+      }
+      sRaw += chunk;
+      appendStream(5, chunk);
+    }, { maxTokens: 4096 });
+  } catch (e) { showStepError(5, '一句话卖点 LLM 调用失败', e); throw e; }
   console.log('[⑤Slogan] 原始响应:', sRaw);
   try {
     STATE.slogan = robustParseObject(sRaw);
