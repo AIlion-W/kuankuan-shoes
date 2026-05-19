@@ -200,7 +200,7 @@
 
       <div id="manual-pane" style="display:none;">
         <h3>自己跑一个新品</h3>
-        <p style="color: var(--muted); font-size: 14px; margin-bottom: 16px;">因为浏览器跨域限制，淘宝商品数据需要你在终端跑一段命令拿到 JSON，再粘进来。后续步骤全自动。</p>
+        <p style="color: var(--muted); font-size: 14px; margin-bottom: 16px;">粘贴一个淘宝/天猫商品 URL（或纯 itemId），AI 全自动跑完 6 步。</p>
 
         <div class="form-row">
           <div>
@@ -208,28 +208,12 @@
             <input id="manual-keyword" placeholder="例：儿童牙膏">
           </div>
           <div>
-            <label>淘宝/天猫商品 ID（itemId）</label>
-            <input id="manual-itemid" placeholder="例：897011294280">
+            <label>淘宝/天猫 URL 或商品 ID</label>
+            <input id="manual-url" placeholder="https://detail.tmall.com/item.htm?id=... 或直接填 itemId">
           </div>
         </div>
 
-        <div class="helper" id="manual-helper" style="display:none;">
-          <p>📋 复制下面这条命令到终端跑，把返回的 JSON 粘到下方文本框：</p>
-          <pre id="manual-cmd"></pre>
-        </div>
-
-        <div class="form-row">
-          <div>
-            <label>商品详情 JSON</label>
-            <textarea id="manual-detail-json" placeholder='粘贴 JustoneAPI 商品详情 v5 返回的完整 JSON'></textarea>
-          </div>
-          <div>
-            <label>评论 JSON（可选）</label>
-            <textarea id="manual-review-json" placeholder='粘贴 JustoneAPI 评论 v3 返回的完整 JSON。可空，但评论是突围点的金矿。'></textarea>
-          </div>
-        </div>
-
-        <button class="btn btn-primary" id="btn-manual">▶ 开始策划（自填模式）</button>
+        <button class="btn btn-primary" id="btn-manual">▶ 开始策划</button>
       </div>
 
       <div class="key-toggle">
@@ -394,21 +378,16 @@ $('key-evolink').oninput = e => {
   localStorage.setItem('evolink_key', STATE.apiKey);
 };
 
-$('manual-itemid').oninput = e => {
-  const id = e.target.value.trim();
-  if (id) {
-    $('manual-helper').style.display = '';
-    $('manual-cmd').textContent =
-`curl -s "https://api.justoneapi.com/api/taobao/get-item-detail/v5?token=${JUSTONE_KEY}&itemId=${id}"
-# 评论
-curl -s "https://api.justoneapi.com/api/taobao/get-item-comment/v3?token=${JUSTONE_KEY}&itemId=${id}&page=1"`;
-  } else {
-    $('manual-helper').style.display = 'none';
-  }
-};
-
 $('btn-demo').onclick = startDemo;
 $('btn-manual').onclick = startManual;
+
+function parseItemId(input) {
+  const s = (input || '').trim();
+  if (/^\d{6,}$/.test(s)) return s;
+  const m = s.match(/[?&]id=(\d{6,})/);
+  if (m) return m[1];
+  return null;
+}
 
 async function startDemo() {
   $('btn-demo').disabled = true;
@@ -428,25 +407,37 @@ async function startDemo() {
 
 async function startManual() {
   const kw = $('manual-keyword').value.trim();
-  const itemId = $('manual-itemid').value.trim();
-  const detailRaw = $('manual-detail-json').value.trim();
-  if (!kw || !itemId || !detailRaw) {
-    alert('请填写关键词、itemId 和商品详情 JSON');
-    return;
-  }
-  try {
-    STATE.detail = JSON.parse(detailRaw);
-    const revRaw = $('manual-review-json').value.trim();
-    STATE.reviews = revRaw ? JSON.parse(revRaw) : null;
-  } catch (e) {
-    alert('JSON 解析失败：' + e.message);
+  const urlIn = $('manual-url').value.trim();
+  const itemId = parseItemId(urlIn);
+  if (!kw || !itemId) {
+    alert('请填写关键词，以及合法的淘宝/天猫 URL 或 itemId（纯数字）');
     return;
   }
   STATE.keyword = kw;
   STATE.itemId = itemId;
   $('btn-manual').disabled = true;
+  $('btn-manual').textContent = '正在抓商品数据...';
   $('run-area').style.display = '';
   $('run-area').scrollIntoView({ behavior: 'smooth' });
+
+  // 并行抓商品详情 + 评论
+  try {
+    const [detail, reviews] = await Promise.all([
+      fetch(`https://api.justoneapi.com/api/taobao/get-item-detail/v5?token=${JUSTONE_KEY}&itemId=${itemId}`).then(r => r.json()),
+      fetch(`https://api.justoneapi.com/api/taobao/get-item-comment/v3?token=${JUSTONE_KEY}&itemId=${itemId}&page=1&orderType=feedbackdate`).then(r => r.json()).catch(() => null)
+    ]);
+    if (detail.code !== 0 || !detail.data) {
+      throw new Error('商品数据抓取失败: ' + (detail.message || JSON.stringify(detail).slice(0,200)));
+    }
+    STATE.detail = detail;
+    STATE.reviews = reviews;
+  } catch (e) {
+    alert('抓取淘宝数据失败：' + e.message);
+    $('btn-manual').disabled = false;
+    $('btn-manual').textContent = '▶ 开始策划';
+    return;
+  }
+
   runPipeline().catch(handleErr);
 }
 
@@ -463,8 +454,7 @@ async function llm(systemMsg, userMsg, opts = {}) {
       { role: 'system', content: systemMsg },
       { role: 'user', content: userMsg }
     ],
-    max_tokens: opts.maxTokens || 4096,
-    temperature: opts.temperature ?? 0.7
+    max_tokens: opts.maxTokens || 4096
   };
   const res = await fetch(`${EVOLINK_BASE}/chat/completions`, {
     method: 'POST',
