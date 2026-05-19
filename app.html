@@ -310,6 +310,7 @@ const STATE = {
   slogan: null,
   finalHtml: null,
   heroImages: [null, null, null],
+  heroDataURLs: [null, null, null],
   apiKey: localStorage.getItem('evolink_key') || DEFAULT_KEY
 };
 document.getElementById('key-evolink').value = STATE.apiKey;
@@ -790,40 +791,65 @@ slogan 草稿：${sb.slogan_draft}
     `E-commerce comparison hero, 1:1, split layout. LEFT: generic competitor product with red highlight showing the problem + Chinese label 「常见问题」. RIGHT: our product showing the solution + green check + Chinese label 「${STATE.slogan.alt_data || STATE.slogan.main_slogan}」. Top-center title 「一眼看出区别」. Professional infographic style. Context: ${imgPromptBase}`
   ];
 
-  const imgPromises = imgPrompts.map((p, i) => genImage(p).then(url => {
+  const imgPromises = imgPrompts.map((p, i) => genImage(p).then(async url => {
     STATE.heroImages[i] = url;
     const cells = $('images-row').querySelectorAll('.image-cell');
     cells[i].innerHTML = `<img src="${url}" alt="hero-${i+1}">`;
+    // 同时下载为 base64，方便后续嵌入详情页
+    try {
+      STATE.heroDataURLs[i] = await urlToDataURL(url);
+    } catch (e) { /* 转 base64 失败就保留远程 URL */ }
   }).catch(e => {
     const cells = $('images-row').querySelectorAll('.image-cell');
     cells[i].innerHTML = `<div class="placeholder" style="color:var(--err);">✗ 失败: ${e.message.slice(0,60)}</div>`;
   }));
 
-  // 渲染 HTML 详情页（不等图片完成）
+  // 先渲一版预览（用远程 URL，图还没来时占位）
   STATE.finalHtml = buildDetailPage();
-  const blob = new Blob([STATE.finalHtml], { type: 'text/html' });
-  const url = URL.createObjectURL(blob);
+  let blob = new Blob([STATE.finalHtml], { type: 'text/html' });
+  let blobUrl = URL.createObjectURL(blob);
   $('page-preview-area').innerHTML = `
-    <h3 style="margin-top: 32px;">📄 HTML 详情页（已生成）</h3>
-    <div class="result-iframe-wrap"><iframe src="${url}"></iframe></div>
+    <h3 style="margin-top: 32px;">📄 HTML 详情页（实时生成中...）</h3>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:8px;">主图陆续加载完会自动重渲，下载的 HTML 会内嵌图片（自包含，可永久使用）</p>
+    <div class="result-iframe-wrap"><iframe id="result-iframe" src="${blobUrl}"></iframe></div>
     <div style="display:flex; gap:12px; margin-top: 16px;">
-      <a href="${url}" download="${STATE.itemId}-detail-page.html" class="btn btn-primary">⬇ 下载 HTML</a>
-      <button class="btn btn-ghost" onclick="window.open('${url}', '_blank')">在新窗口打开</button>
+      <a id="dl-html" href="${blobUrl}" download="${STATE.itemId}-detail-page.html" class="btn btn-primary">⬇ 下载 HTML</a>
+      <button class="btn btn-ghost" onclick="window.open(document.getElementById('dl-html').href, '_blank')">在新窗口打开</button>
     </div>
   `;
 
   await Promise.all(imgPromises);
+
+  // 全部 3 张就位后用 base64 重新渲一版 self-contained HTML
+  STATE.finalHtml = buildDetailPage(/*useDataURL*/ true);
+  blob = new Blob([STATE.finalHtml], { type: 'text/html' });
+  blobUrl = URL.createObjectURL(blob);
+  $('result-iframe').src = blobUrl;
+  $('dl-html').href = blobUrl;
+  document.querySelector('#page-preview-area h3').textContent = '📄 HTML 详情页（已完成 · 主图内嵌）';
   setStep(6, 'done');
 }
 
-function buildDetailPage() {
+async function urlToDataURL(url) {
+  const blob = await fetch(url).then(r => r.blob());
+  return await new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = reject;
+    r.readAsDataURL(blob);
+  });
+}
+
+function buildDetailPage(useDataURL = false) {
   const s = STATE.slogan;
   const sb = STATE.selectedBreakout;
   const item = STATE.detail?.data?.item || STATE.detail?.item || STATE.detail;
   const title = item?.title || '产品';
   const price = item?.skus?.promotion_price || item?.skus?.price || '—';
 
-  const heroImg = STATE.heroImages[0] || 'data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 800 800%22><rect fill=%22%23F4F1EA%22 width=%22800%22 height=%22800%22/><text x=%22400%22 y=%22400%22 font-size=%2240%22 text-anchor=%22middle%22 fill=%22%231D3557%22>主图生成中</text></svg>';
+  const imgSrc = (i) => useDataURL ? (STATE.heroDataURLs[i] || STATE.heroImages[i]) : (STATE.heroImages[i] || STATE.heroDataURLs[i]);
+  const heroImg = imgSrc(0) || 'data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 800 800%22><rect fill=%22%23F4F1EA%22 width=%22800%22 height=%22800%22/><text x=%22400%22 y=%22400%22 font-size=%2240%22 text-anchor=%22middle%22 fill=%22%231D3557%22>主图生成中</text></svg>';
+  const galleryImgs = [imgSrc(0), imgSrc(1), imgSrc(2)].filter(Boolean);
 
   return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>${escapeHtml(s.main_slogan)} · 详情页</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;700;900&family=Noto+Sans+SC:wght@300;400;500;700;900&display=swap" rel="stylesheet">
@@ -866,7 +892,7 @@ footer{padding:40px 0;text-align:center;font-size:13px;color:var(--muted);border
 <h1>${heroH1(s.main_slogan)}</h1>
 <p class="hero-sub">${escapeHtml(s.pain_intro)}</p>
 <div class="hero-image"><img src="${heroImg}" alt="${escapeHtml(s.main_slogan)}"></div>
-${STATE.heroImages.filter(x=>x).length > 1 ? `<div class="images">${STATE.heroImages.filter(x=>x).map(u=>`<img src="${u}">`).join('')}</div>` : ''}
+${galleryImgs.length > 1 ? `<div class="images">${galleryImgs.map(u=>`<img src="${u}">`).join('')}</div>` : ''}
 </div></section>
 
 <section><div class="container">
