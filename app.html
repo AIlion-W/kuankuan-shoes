@@ -216,14 +216,8 @@
         <button class="btn btn-primary" id="btn-manual">▶ 开始策划</button>
       </div>
 
-      <div class="key-toggle">
-        <span>使用我们预配好的 evolink 密钥</span>
-        <a id="toggle-keys">[更换密钥]</a>
-      </div>
-      <div class="keys-panel" id="keys-panel">
-        <label>evolink API Key（用于 Claude Opus 4.7 + GPT Image 2）</label>
+      <div class="keys-panel" id="keys-panel" style="display:none;">
         <input id="key-evolink" placeholder="sk-...">
-        <p style="font-size: 12px; color: var(--muted); margin-top: 8px;">默认使用项目预置 key。可换成你自己的。仅存浏览器 localStorage。</p>
       </div>
     </div>
   </div>
@@ -387,10 +381,8 @@ document.querySelectorAll('.mode-tab').forEach(tab => {
   };
 });
 
-$('toggle-keys').onclick = () => {
-  $('keys-panel').classList.toggle('show');
-};
-$('key-evolink').oninput = e => {
+const _tk = $('toggle-keys'); if (_tk) _tk.onclick = () => { $('keys-panel').classList.toggle('show'); };
+const _ke = $('key-evolink'); if (_ke) _ke.oninput = e => {
   STATE.apiKey = e.target.value.trim() || DEFAULT_KEY;
   localStorage.setItem('evolink_key', STATE.apiKey);
 };
@@ -438,18 +430,52 @@ async function startManual() {
   $('run-area').scrollIntoView({ behavior: 'smooth' });
 
   // 并行抓商品详情 + 评论
+  const fetchWithRetry = async (url, attempts = 2) => {
+    let lastErr;
+    for (let i = 0; i < attempts; i++) {
+      try {
+        const r = await fetch(url);
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return await r.json();
+      } catch (e) {
+        lastErr = e;
+        console.warn('[fetch attempt ' + (i+1) + ' fail]', url, e.message);
+        await new Promise(r => setTimeout(r, 1000));
+      }
+    }
+    throw lastErr;
+  };
+
   try {
+    const detailUrl = `https://api.justoneapi.com/api/taobao/get-item-detail/v5?token=${JUSTONE_KEY}&itemId=${itemId}`;
+    const reviewUrl = `https://api.justoneapi.com/api/taobao/get-item-comment/v3?token=${JUSTONE_KEY}&itemId=${itemId}&page=1&orderType=feedbackdate`;
+    console.log('[fetch] detail:', detailUrl);
+    console.log('[fetch] reviews:', reviewUrl);
+
     const [detail, reviews] = await Promise.all([
-      fetch(`https://api.justoneapi.com/api/taobao/get-item-detail/v5?token=${JUSTONE_KEY}&itemId=${itemId}`).then(r => r.json()),
-      fetch(`https://api.justoneapi.com/api/taobao/get-item-comment/v3?token=${JUSTONE_KEY}&itemId=${itemId}&page=1&orderType=feedbackdate`).then(r => r.json()).catch(() => null)
+      fetchWithRetry(detailUrl, 2),
+      fetchWithRetry(reviewUrl, 1).catch(e => { console.warn('评论抓取失败但继续:', e); return null; })
     ]);
     if (detail.code !== 0 || !detail.data) {
-      throw new Error('商品数据抓取失败: ' + (detail.message || JSON.stringify(detail).slice(0,200)));
+      throw new Error('商品数据 API 返回异常: ' + (detail.message || JSON.stringify(detail).slice(0,200)));
     }
     STATE.detail = detail;
     STATE.reviews = reviews;
   } catch (e) {
-    alert('抓取淘宝数据失败：' + e.message);
+    console.error('[fetch 失败]', e);
+    const hint = e.message === 'Failed to fetch'
+      ? '<br><br>⚠️ 浏览器无法发起请求。常见原因：<ol style="margin:8px 0 0 20px;padding:0;"><li>广告拦截扩展（AdBlock / Privacy Badger）拦截了 api.justoneapi.com</li><li>科学上网工具/企业代理在阻挡</li><li>浏览器缓存了旧的 CORS 拒绝</li></ol>请尝试：<ol style="margin:8px 0 0 20px;padding:0;"><li>开<b>无痕模式</b>重试（排除扩展）</li><li>强制刷新 Cmd+Shift+R</li><li>F12 看 Network 标签的具体错误</li></ol>'
+      : '';
+    $('run-area').style.display = 'none';
+    alert('抓取淘宝数据失败：' + e.message + hint.replace(/<[^>]+>/g,'\n').replace(/\n+/g,'\n'));
+    // 顺便在输入区显示一个友好的错误条
+    if (!document.getElementById('fetch-err')) {
+      const div = document.createElement('div');
+      div.id = 'fetch-err';
+      div.style.cssText = 'background:#FFE0D2;border-left:4px solid #C8321F;padding:16px;border-radius:8px;margin-top:16px;color:#A23B22;';
+      div.innerHTML = '<strong>抓取失败：' + escapeHtml(e.message) + '</strong>' + hint;
+      $('manual-pane').appendChild(div);
+    }
     $('btn-manual').disabled = false;
     $('btn-manual').textContent = '▶ 开始策划';
     return;
