@@ -72,15 +72,6 @@
   .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
   .btn-small { padding: 8px 16px; font-size: 13px; }
 
-  .mode-tabs { display: flex; gap: 8px; margin-bottom: 24px; }
-  .mode-tab {
-    padding: 10px 20px; border-radius: 30px;
-    background: var(--paper-2); color: var(--muted);
-    cursor: pointer; font-size: 14px; font-weight: 700;
-    border: 2px solid transparent;
-  }
-  .mode-tab.active { background: white; color: var(--ink); border-color: var(--accent); }
-
   .helper { background: var(--paper-2); padding: 16px 20px; border-radius: 10px; font-size: 13px; color: var(--muted); margin-top: 12px; line-height: 1.7; }
   .helper code { background: var(--ink); color: var(--highlight); padding: 2px 8px; border-radius: 4px; font-family: "JetBrains Mono", monospace; font-size: 12px; }
   .helper pre { background: var(--ink); color: white; padding: 12px 16px; border-radius: 8px; font-family: "JetBrains Mono", monospace; font-size: 12px; margin-top: 8px; overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
@@ -177,29 +168,8 @@
     <p class="lead">输入一个竞品 URL（淘宝/天猫），AI 会按 6 步方法论自动跑完，中途让你挑突围点，最终产出可交付的 HTML 策划页 + 3 张 AI 主图。</p>
 
     <div class="input-panel">
-      <div class="mode-tabs">
-        <div class="mode-tab active" data-mode="demo">⚡ Demo · 稳稳鞋（预存数据）</div>
-        <div class="mode-tab" data-mode="manual">🛠 自填 · 你自己的品</div>
-      </div>
-
-      <div id="demo-pane">
-        <h3>一键体验完整流程</h3>
-        <p style="color: var(--muted); font-size: 14px; margin-bottom: 16px;">使用我们预先抓好的「泰兰尼斯稳稳鞋 MAX」真实数据（含 100 条评论），点击下方按钮即可看到 AI 从市场分析到详情页的完整 60 分钟产出。</p>
-        <div class="form-row">
-          <div>
-            <label>产品关键词</label>
-            <input id="demo-keyword" value="婴幼儿学步凉鞋" readonly>
-          </div>
-          <div>
-            <label>竞品 URL</label>
-            <input id="demo-url" value="https://detail.tmall.com/item.htm?id=897011294280" readonly>
-          </div>
-        </div>
-        <button class="btn btn-primary" id="btn-demo">▶ 开始策划（Demo 模式）</button>
-      </div>
-
-      <div id="manual-pane" style="display:none;">
-        <h3>自己跑一个新品</h3>
+      <div id="manual-pane">
+        <h3>开始策划你的产品</h3>
         <p style="color: var(--muted); font-size: 14px; margin-bottom: 16px;">粘贴一个淘宝/天猫商品 URL（或纯 itemId），AI 全自动跑完 6 步。</p>
 
         <div class="form-row">
@@ -292,7 +262,7 @@ const LLM_MODEL = "claude-opus-4-7";
 const IMG_MODEL = "gpt-image-2";
 
 const STATE = {
-  mode: 'demo',
+  mode: 'manual',
   keyword: '',
   itemId: '',
   detail: null,
@@ -370,24 +340,12 @@ function appendStream(n, text) {
   stream.scrollTop = stream.scrollHeight;
 }
 
-/* ============================ Mode tabs ============================ */
-document.querySelectorAll('.mode-tab').forEach(tab => {
-  tab.onclick = () => {
-    document.querySelectorAll('.mode-tab').forEach(t => t.classList.remove('active'));
-    tab.classList.add('active');
-    STATE.mode = tab.dataset.mode;
-    $('demo-pane').style.display = STATE.mode === 'demo' ? '' : 'none';
-    $('manual-pane').style.display = STATE.mode === 'manual' ? '' : 'none';
-  };
-});
-
 const _tk = $('toggle-keys'); if (_tk) _tk.onclick = () => { $('keys-panel').classList.toggle('show'); };
 const _ke = $('key-evolink'); if (_ke) _ke.oninput = e => {
   STATE.apiKey = e.target.value.trim() || DEFAULT_KEY;
   localStorage.setItem('evolink_key', STATE.apiKey);
 };
 
-$('btn-demo').onclick = startDemo;
 $('btn-manual').onclick = startManual;
 
 function parseItemId(input) {
@@ -396,22 +354,6 @@ function parseItemId(input) {
   const m = s.match(/[?&]id=(\d{6,})/);
   if (m) return m[1];
   return null;
-}
-
-async function startDemo() {
-  $('btn-demo').disabled = true;
-  STATE.keyword = $('demo-keyword').value;
-  // 拉本地 demo 数据
-  const [d, r] = await Promise.all([
-    fetch('demo-tmall-detail.json').then(r => r.json()),
-    fetch('demo-tmall-reviews.json').then(r => r.json())
-  ]);
-  STATE.detail = d;
-  STATE.reviews = r;
-  STATE.itemId = '897011294280';
-  $('run-area').style.display = '';
-  $('run-area').scrollIntoView({ behavior: 'smooth' });
-  runPipeline().catch(handleErr);
 }
 
 async function startManual() {
@@ -621,11 +563,19 @@ async function runPipeline() {
   // Step 2: 市场扫描
   setStep(2, 'active');
   appendStream(2, ''); // init
-  const marketPrompt = `你是资深电商市场分析师。请基于下面的产品信息，做一份「市场扫描」报告，覆盖：
+  const marketPrompt = `你是资深电商市场分析师。
+
+# 底层认知（贯穿全流程）
+- 卖点的本质是「突围点」，不是产品介绍。
+- 突围点 = 竞品的死穴 ∩ 用户的痛点 ∩ 我的特长。这一步你负责前两项的原料采集。
+- 看市场分三层：看对手（红海里大家在喊什么 → 要避开）/ 看用户（哪里没被满足 → 机会）/ 看趋势（往哪儿走）。
+
+# 任务
+基于下面的产品信息，做一份「市场扫描」报告，覆盖：
 1. 品类大盘（市场规模/增长率/集中度判断）
-2. 头部品牌格局（列 3-5 个核心竞争品牌 + 心智 + 价格带）
+2. 头部品牌格局（列 3-5 个核心竞争品牌 + 心智占位 + 价格带）—— 标注他们「喊得最响的卖点」，这是要避开的同质化高地
 3. 近期爆款方向（3-5 个）
-4. 用户搜索行为：核心关注点 TOP 5 + 不满点 TOP 5（不满点是后续突围方向的原料）
+4. 用户搜索行为：核心关注点 TOP 5 + **不满点 TOP 5**（不满点是后续突围方向的原料，宁可写得具体啰嗦，也不要抽象）
 5. 是否值得做 + 一句话跟品逻辑
 
 输出 markdown 格式，紧凑实用，不要废话。`;
@@ -647,13 +597,25 @@ async function runPipeline() {
     .map(c => ({ date: c.date, content: c.content, sku: c.auction?.sku }));
   const reviewCount = STATE.reviews?.data?.total || reviewComments.length;
 
-  const compPrompt = `你是资深电商竞品分析师。基于下面的产品信息+评论原文，做一份「竞品拆解」报告：
+  const compPrompt = `你是资深电商竞品分析师，同时具备「视觉定位解码师」+「价值主张拆解师」+「定价心理学战略分析师」三重视角。
 
-1. 6 块结构：基础数据 / 核心卖点 / 配方材质 / 目标人群 / 评论金矿 / 破绽汇总
-2. 评论金矿要求：
+# 底层信念
+- 优秀的竞品主图，本质上是把「痛点」变成了「信号」—— 你要反推它在向哪类用户喊话。
+- 找负评 = 找未被满足的需求 = 找创新机会。差评和追评比好评更值钱。
+- 价格是检验定位的唯一标准：卖点和价格不一致 = 定位是假的。
+
+# 任务
+基于下面的产品信息+评论原文，做一份「竞品拆解」报告：
+
+1. **6 块结构**：基础数据 / 核心卖点（USP）/ 配方材质（RTB 证据链）/ 目标人群（视觉风格反推）/ 评论金矿 / **破绽汇总**
+2. **核心卖点**要分层：
+   - 一级卖点（吸引购买的钩子，主图大字）
+   - 二级卖点（详情页辅助决策）
+   - 基础卖点（人有我有，不构成差异）
+3. **评论金矿**要求：
    - 列 5-8 条最有价值的评论原文（带日期）
-   - 标注每条属于：① 晒单被夸但商家没主打的点 ② 差评/痛点 ③ 追评/未满足需求
-3. 破绽汇总：列 3-5 个突围切入点，每个一句话
+   - 每条标注：① 晒单被夸但商家没主打的点（隐藏卖点）② 差评/痛点（突围切口）③ 追评/未满足需求（升级方向）
+4. **破绽汇总**：列 3-5 个突围切入点，每个一句话，**直指竞品死穴**（不是"竞品做得不够好"，而是"竞品根本没在做"的盲区）
 
 输出 markdown。`;
 
@@ -676,24 +638,49 @@ ${reviewComments.map((c,i) => `${i+1}. [${c.date}] ${c.content}`).join('\n')}`,
   setStep(4, 'active');
   setBlockBody(4, '<div class="stream"></div><div id="breakouts-area"></div>');
 
-  const breakoutPrompt = `你是货军师 · 资深产品策划军师。基于市场扫描和竞品拆解，用「三条混合方法」生成 5-10 个突围点候选。
+  const breakoutPrompt = `你是货军师 · 资深产品策划军师。前面 2 步（市场扫描、竞品拆解）只是「情报员」，到你这里要把情报炼成「子弹」。
 
-三条方法：
-- A 评论挖痛：从评论原文里找未满足需求
-- B 人群迁移：把核心功能迁移到新人群（年龄/性别/场景/角色/健康/送礼）
-- C 功能反查：把产品拆成功能原子，反查新用途
+# 核心公式（必须显式使用，写在每个突围点的 insight 字段里）
+**我的突围点 = 竞品的死穴 ∩ 用户的痛点 ∩ 我的特长**
+三者缺一不可：
+- 只有用户痛点没有竞品死穴 → 别人也在做，同质化
+- 只有竞品死穴没有用户痛点 → 用户不在乎，伪需求
+- 只有用户痛点+竞品死穴但我没特长 → 做不出来，空想
 
+# 四步思考框架（按顺序在脑内走完）
+1. **看对手（红海）**：竞品都在喊什么？→ 这些是要避开的高地
+2. **看用户（机会）**：竞品哪里没做好？→ 评论金矿里的差评/追评/隐藏夸点
+3. **看自己（武器）**：我有什么功能/原料/服务是竞品没有的，且**恰好能解决上述痛点**？
+4. **定策略（破局）**：用一句话攻击对手弱点，满足用户渴望
+
+# 好突围点四要素（评分时按此打分）
+- **有价值**：用户真的在乎，能影响下单
+- **可感知**：用户一眼能看懂，不需要解释
+- **差异大**：竞品没做或做反了
+- **好传播**：一句话能讲清，能进主图能进口播
+
+# 三条混合生成方法（保证候选多样性）
+- A **评论挖痛**：从评论原文里找未满足需求 → 直击用户痛点
+- B **人群迁移**：把核心功能迁移到新人群（年龄/性别/场景/角色/健康/送礼）→ 开辟蓝海
+- C **功能反查**：把产品拆成功能原子，反查新用途 → 用我的特长打竞品没设防的角度
+
+# 输出要求
 每个突围点必须严格输出 JSON 格式（不要 markdown、不要 \`\`\`、不要任何包装），字段：
 {
   "name": "一句话定义（不超过 16 字）",
   "method": "A/B/C（可多选）",
-  "insight": "核心洞察（含用户原话或数据支撑）",
+  "insight": "核心洞察，必须显式套用公式：[竞品死穴：XXX] × [用户痛点：YYY（最好带评论原话）] × [我的特长：ZZZ] → 突围逻辑",
   "audience": "具体目标人群画像",
-  "differentiation": "和现有竞品比新在哪",
+  "differentiation": "和现有竞品比新在哪（必须指出竞品没在喊的角度，不是'我做得更好'）",
   "improvement": "产品/包装/视觉如何改造",
-  "slogan_draft": "一句话 slogan 草稿",
+  "slogan_draft": "一句话 slogan 草稿（对象具体，能进主图大字）",
   "score": { "market": 1-10, "differentiation": 1-10, "feasibility": 1-10, "total": 总分 }
 }
+
+评分锚点（按四要素打分）：
+- market（有价值 + 可感知）：用户真的在乎吗？一眼能懂吗？
+- differentiation（差异大）：竞品没做 / 做反了 / 不敢做？得分越高代表越蓝海
+- feasibility（可执行 + 好传播）：我能不能做？一句话讲不讲得清？
 
 最终输出一个 JSON 数组，按 total 降序排列。直接输出 JSON 数组，不要任何前言后语、不要 markdown 代码块。`;
 
@@ -775,6 +762,21 @@ ${STATE.competitor.slice(0, 3000)}
   setStep(5, 'active');
   const sb = STATE.selectedBreakout;
   const sloganPrompt = `你是金句策划师。基于已选定的突围点，产出最终「一句话卖点」+ 完整支撑体系。
+
+# 好卖点四要素（main_slogan 必须四项全占）
+1. **有价值**：用户真的在乎，影响下单决策（不是自嗨）
+2. **可感知**：一眼能懂，不需要解释，最好带具体数字/对象/动作
+3. **差异大**：竞品没在喊，或者竞品在喊但喊反了
+4. **好传播**：≤15 字，能进主图大字，能进口播，能被用户复述给朋友
+
+# 反面教材（避免）
+- "高品质瑶浴包" → 抽象，无差异（人有我有）
+- "采用天然草本" → 没痛点，没数据
+- "舒适透气" → 烂大街
+
+# 正面参考（PPT 真实案例）
+- 瑶浴："不用熬煮直接泡" —— 对手是"泡药"，一句话点穿用户痛点（懒/快）+ 竞品死穴（操作复杂）
+- 宽宽鞋：定位"宽脚专用"，定价从 69 涨到 129，溢价 60 元/单
 
 突围点：${sb.name}
 洞察：${sb.insight}
