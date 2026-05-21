@@ -366,17 +366,27 @@ async function startManual() {
   $('run-area').scrollIntoView({ behavior: 'smooth' });
 
   // 并行抓商品详情 + 评论
-  const fetchWithRetry = async (url, attempts = 2) => {
+  // justoneapi 的爬虫池经常首请失败返回 "COLLECT FAILED, SEND REQUEST AGAIN"，应用层重试是必要的
+  const fetchWithRetry = async (url, attempts = 5, { requireData = false } = {}) => {
     let lastErr;
     for (let i = 0; i < attempts; i++) {
       try {
         const r = await fetch(url);
         if (!r.ok) throw new Error('HTTP ' + r.status);
-        return await r.json();
+        const json = await r.json();
+        if (json && json.code !== 0) {
+          throw new Error('API code=' + json.code + ' msg=' + (json.message || ''));
+        }
+        if (requireData && (!json || !json.data)) {
+          throw new Error('API 返回缺少 data 字段');
+        }
+        return json;
       } catch (e) {
         lastErr = e;
-        console.warn('[fetch attempt ' + (i+1) + ' fail]', url, e.message);
-        await new Promise(r => setTimeout(r, 1000));
+        console.warn('[fetch attempt ' + (i+1) + '/' + attempts + ' fail]', url, e.message);
+        if (i < attempts - 1) {
+          await new Promise(r => setTimeout(r, 1000 * Math.pow(2, i)));
+        }
       }
     }
     throw lastErr;
@@ -389,8 +399,8 @@ async function startManual() {
     console.log('[fetch] reviews:', reviewUrl);
 
     const [detail, reviews] = await Promise.all([
-      fetchWithRetry(detailUrl, 2),
-      fetchWithRetry(reviewUrl, 1).catch(e => { console.warn('评论抓取失败但继续:', e); return null; })
+      fetchWithRetry(detailUrl, 5, { requireData: true }),
+      fetchWithRetry(reviewUrl, 3).catch(e => { console.warn('评论抓取失败但继续:', e); return null; })
     ]);
     if (detail.code !== 0 || !detail.data) {
       throw new Error('商品数据 API 返回异常: ' + (detail.message || JSON.stringify(detail).slice(0,200)));
